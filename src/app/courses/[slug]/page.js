@@ -54,11 +54,18 @@ export default function CourseDetailsPage() {
   const lessons = courseData.lessons?.data || courseData.lessons || [];
   const instructor = courseData.instructor?.data?.attributes || courseData.instructor || {};
 
-  const handleEnrollClick = () => {
+//   const handleEnrollClick = () => {
+//     if (!user) {
+//       router.push('/login');
+//     } else {
+//       router.push('/dashboard');
+//     }
+//   }; 
+const handleEnrollClick = () => {
     if (!user) {
       router.push('/login');
     } else {
-      router.push('/dashboard');
+      router.push(`/courses/${slug}/learn`);
     }
   };
 
