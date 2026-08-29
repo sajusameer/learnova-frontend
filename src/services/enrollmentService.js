@@ -1,19 +1,19 @@
-
-
 import { fetchFromStrapi } from '@/lib/api';
 
 export const enrollmentService = {
   // Check if current user is enrolled in a course
   async getEnrollment(courseId, userId, token) {
     try {
-      const res = await fetchFromStrapi('/enrollments?populate=*', { token });
+      const res = await fetchFromStrapi(
+        `/enrollments?filters[$or][0][user][id][$eq]=${userId}&filters[$or][1][user][documentId][$eq]=${userId}&populate=*`,
+        { token }
+      );
       const enrollments = res.data || [];
       return (
         enrollments.find((e) => {
           const data = e.attributes || e;
-          const uId = data.user?.data?.id || data.user?.id || data.user?.documentId || data.user;
           const cId = data.course?.data?.id || data.course?.id || data.course?.documentId || data.course;
-          return String(uId) === String(userId) && String(cId) === String(courseId);
+          return String(cId) === String(courseId);
         }) || null
       );
     } catch (err) {
@@ -22,35 +22,45 @@ export const enrollmentService = {
     }
   },
 
-  // Enroll user into a course
+  // Enroll user into a course (Strapi v5 & v4 Compatible)
   async enrollCourse(courseId, userId, token) {
+    const payload = {
+      data: {
+        user: typeof userId === 'string' && userId.length > 10 ? { set: [userId] } : userId,
+        course: typeof courseId === 'string' && courseId.length > 10 ? { set: [courseId] } : courseId,
+      },
+    };
+
     return await fetchFromStrapi('/enrollments', {
       method: 'POST',
       token,
-      body: JSON.stringify({
-        data: {
-          user: userId,
-          course: courseId,
-        },
-      }),
+      body: JSON.stringify(payload),
     });
   },
 
   // Get user completed lessons for a course
   async getLessonProgress(courseId, userId, token) {
-    // 1. LocalStorage চেক
     const localKey = `learnova_progress_${userId}_${courseId}`;
-    const localSaved = JSON.parse(localStorage.getItem(localKey) || '[]');
+    let localSaved = [];
+    if (typeof window !== 'undefined') {
+      try {
+        localSaved = JSON.parse(localStorage.getItem(localKey) || '[]');
+      } catch {
+        localSaved = [];
+      }
+    }
 
     try {
-      const res = await fetchFromStrapi('/lesson-progresses?populate=*', { token });
+      const res = await fetchFromStrapi(
+        `/lesson-progresses?filters[$or][0][user][id][$eq]=${userId}&filters[$or][1][user][documentId][$eq]=${userId}&populate=*`,
+        { token }
+      );
       const allProgresses = res.data || [];
 
       const backendProgresses = allProgresses.filter((p) => {
         const data = p.attributes || p;
-        const uId = data.user?.data?.id || data.user?.id || data.user?.documentId || data.user;
         const cId = data.course?.data?.id || data.course?.id || data.course?.documentId || data.course;
-        return String(uId) === String(userId) && String(cId) === String(courseId);
+        return String(cId) === String(courseId);
       });
 
       if (backendProgresses.length > 0) {
@@ -69,29 +79,30 @@ export const enrollmentService = {
     const courseDocId = course.documentId || course.id;
     const userDocId = user.documentId || user.id;
 
-    // 1. LocalStorage
     const localKey = `learnova_progress_${user.id}_${course.id}`;
-    const existing = JSON.parse(localStorage.getItem(localKey) || '[]');
-    if (!existing.includes(lesson.id)) {
-      existing.push(lesson.id);
-      localStorage.setItem(localKey, JSON.stringify(existing));
+    if (typeof window !== 'undefined') {
+      const existing = JSON.parse(localStorage.getItem(localKey) || '[]');
+      if (!existing.includes(lesson.id)) {
+        existing.push(lesson.id);
+        localStorage.setItem(localKey, JSON.stringify(existing));
+      }
     }
 
-    // 2. Strapi 5 & 4  Payload 
     const payloads = [
       {
         data: {
           completed: true,
           lesson: lessonDocId,
           course: courseDocId,
+          user: userDocId,
         },
       },
       {
         data: {
           completed: true,
-          lesson: lesson.id,
-          course: course.id,
-          user: userDocId,
+          lesson: { set: [lessonDocId] },
+          course: { set: [courseDocId] },
+          user: { set: [userDocId] },
         },
       },
     ];
@@ -103,9 +114,9 @@ export const enrollmentService = {
           token,
           body: JSON.stringify(payload),
         });
-        return res;
+        if (res && (res.data || res.id)) return res;
       } catch {
-        // next payload
+        // try next
       }
     }
 
