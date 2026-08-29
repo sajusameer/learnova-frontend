@@ -1,13 +1,16 @@
+
 // 'use client';
 
 // import { useState } from 'react';
 // import Link from 'next/link';
 // import { usePathname } from 'next/navigation';
 // import Logo from '@/components/ui/Logo';
+// import { useAuth } from '@/context/AuthContext';
 
 // export default function Navbar() {
 //   const [isOpen, setIsOpen] = useState(false);
 //   const pathname = usePathname();
+//   const { user, loading, logout, getDashboardPath } = useAuth();
 
 //   const navLinks = [
 //     { name: 'Home', href: '/' },
@@ -18,15 +21,23 @@
 
 //   const isActive = (path) => pathname === path;
 
+//   const dashboardLabel = () => {
+//     const roleString = user?.role?.name || user?.role?.type || '';
+//     const normalized = roleString.toLowerCase().replace(/[\s-_]+/g, '');
+
+//     if (normalized === 'admin') return 'Admin Panel';
+//     if (normalized === 'instructor') return 'Instructor Dashboard';
+//     if (normalized.includes('content')) return 'Content Manager';
+//     return 'Dashboard';
+//   };
+
 //   return (
 //     <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-[var(--color-brand-border)]">
 //       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
 //         <div className="flex justify-between h-16 items-center">
           
-//           {/* Brand Logo */}
 //           <Logo />
 
-//           {/* Desktop Navigation Links */}
 //           <nav className="hidden md:flex items-center space-x-8">
 //             {navLinks.map((link) => (
 //               <Link
@@ -43,23 +54,42 @@
 //             ))}
 //           </nav>
 
-//           {/* Action Buttons */}
 //           <div className="hidden md:flex items-center space-x-4">
-//             <Link
-//               href="/login"
-//               className="text-sm font-medium text-[var(--color-brand-text-muted)] hover:text-[var(--color-brand-text-main)] px-3 py-2 rounded-lg transition"
-//             >
-//               Sign In
-//             </Link>
-//             <Link
-//               href="/register"
-//               className="text-sm font-medium bg-[var(--color-brand-primary)] hover:bg-[var(--color-brand-primary-hover)] text-white px-4 py-2 rounded-lg shadow-sm transition"
-//             >
-//               Get Started
-//             </Link>
+//             {loading ? (
+//               <div className="h-9 w-24 bg-gray-100 animate-pulse rounded-lg" />
+//             ) : user ? (
+//               <div className="flex items-center space-x-4">
+//                 <Link
+//                   href={getDashboardPath(user.role)}
+//                   className="text-sm font-medium bg-indigo-50 text-[var(--color-brand-primary)] hover:bg-indigo-100 px-3.5 py-2 rounded-lg transition"
+//                 >
+//                   {dashboardLabel()}
+//                 </Link>
+//                 <button
+//                   onClick={logout}
+//                   className="text-sm font-medium text-[var(--color-brand-error)] hover:bg-red-50 px-3 py-2 rounded-lg transition"
+//                 >
+//                   Logout
+//                 </button>
+//               </div>
+//             ) : (
+//               <>
+//                 <Link
+//                   href="/login"
+//                   className="text-sm font-medium text-[var(--color-brand-text-muted)] hover:text-[var(--color-brand-text-main)] px-3 py-2 rounded-lg transition"
+//                 >
+//                   Sign In
+//                 </Link>
+//                 <Link
+//                   href="/register"
+//                   className="text-sm font-medium bg-[var(--color-brand-primary)] hover:bg-[var(--color-brand-primary-hover)] text-white px-4 py-2 rounded-lg shadow-sm transition"
+//                 >
+//                   Get Started
+//                 </Link>
+//               </>
+//             )}
 //           </div>
 
-//           {/* Mobile Menu Button */}
 //           <div className="md:hidden flex items-center">
 //             <button
 //               onClick={() => setIsOpen(!isOpen)}
@@ -78,7 +108,6 @@
 //         </div>
 //       </div>
 
-//       {/* Mobile Menu Dropdown */}
 //       {isOpen && (
 //         <div className="md:hidden border-b border-[var(--color-brand-border)] bg-white px-4 pt-2 pb-4 space-y-2">
 //           {navLinks.map((link) => (
@@ -96,26 +125,49 @@
 //             </Link>
 //           ))}
 //           <div className="pt-4 border-t border-[var(--color-brand-border)] flex flex-col gap-2">
-//             <Link
-//               href="/login"
-//               onClick={() => setIsOpen(false)}
-//               className="block w-full text-center px-4 py-2 border border-[var(--color-brand-border)] rounded-lg text-sm font-medium text-[var(--color-brand-text-main)] hover:bg-gray-50"
-//             >
-//               Sign In
-//             </Link>
-//             <Link
-//               href="/register"
-//               onClick={() => setIsOpen(false)}
-//               className="block w-full text-center px-4 py-2 bg-[var(--color-brand-primary)] hover:bg-[var(--color-brand-primary-hover)] text-white rounded-lg text-sm font-medium shadow-sm"
-//             >
-//               Get Started
-//             </Link>
+//             {user ? (
+//               <>
+//                 <Link
+//                   href={getDashboardPath(user.role)}
+//                   onClick={() => setIsOpen(false)}
+//                   className="block w-full text-center px-4 py-2 bg-indigo-50 text-[var(--color-brand-primary)] font-medium rounded-lg text-sm"
+//                 >
+//                   {dashboardLabel()}
+//                 </Link>
+//                 <button
+//                   onClick={() => {
+//                     logout();
+//                     setIsOpen(false);
+//                   }}
+//                   className="block w-full text-center px-4 py-2 border border-red-200 text-[var(--color-brand-error)] rounded-lg text-sm font-medium hover:bg-red-50"
+//                 >
+//                   Logout
+//                 </button>
+//               </>
+//             ) : (
+//               <>
+//                 <Link
+//                   href="/login"
+//                   onClick={() => setIsOpen(false)}
+//                   className="block w-full text-center px-4 py-2 border border-[var(--color-brand-border)] rounded-lg text-sm font-medium text-[var(--color-brand-text-main)] hover:bg-gray-50"
+//                 >
+//                   Sign In
+//                 </Link>
+//                 <Link
+//                   href="/register"
+//                   onClick={() => setIsOpen(false)}
+//                   className="block w-full text-center px-4 py-2 bg-[var(--color-brand-primary)] hover:bg-[var(--color-brand-primary-hover)] text-white rounded-lg text-sm font-medium shadow-sm"
+//                 >
+//                   Get Started
+//                 </Link>
+//               </>
+//             )}
 //           </div>
 //         </div>
 //       )}
 //     </header>
 //   );
-// }
+// }  
 'use client';
 
 import { useState } from 'react';
@@ -138,14 +190,24 @@ export default function Navbar() {
 
   const isActive = (path) => pathname === path;
 
-  const dashboardLabel = () => {
-    const roleString = user?.role?.name || user?.role?.type || '';
-    const normalized = roleString.toLowerCase().replace(/[\s-_]+/g, '');
+  // Normalized role check
+  const roleString = user?.role?.name || user?.role?.type || user?.username || '';
+  const normalized = roleString.toLowerCase().replace(/[\s-_]+/g, '');
 
-    if (normalized === 'admin') return 'Admin Panel';
-    if (normalized === 'instructor') return 'Instructor Dashboard';
-    if (normalized.includes('content')) return 'Content Manager';
+  const dashboardLabel = () => {
+    if (normalized.includes('admin')) return 'Admin Panel';
+    if (normalized.includes('instructor')) return 'Instructor Portal';
+    if (normalized.includes('content') || normalized.includes('manager')) return 'Content Manager';
     return 'Dashboard';
+  };
+
+  const resolveDashboardHref = () => {
+    if (typeof getDashboardPath === 'function') {
+      return getDashboardPath(user?.role);
+    }
+    if (normalized.includes('admin')) return '/admin';
+    if (normalized.includes('content') || normalized.includes('manager')) return '/content-manager';
+    return '/dashboard';
   };
 
   return (
@@ -175,16 +237,16 @@ export default function Navbar() {
             {loading ? (
               <div className="h-9 w-24 bg-gray-100 animate-pulse rounded-lg" />
             ) : user ? (
-              <div className="flex items-center space-x-4">
+              <div className="flex items-center space-x-3">
                 <Link
-                  href={getDashboardPath(user.role)}
-                  className="text-sm font-medium bg-indigo-50 text-[var(--color-brand-primary)] hover:bg-indigo-100 px-3.5 py-2 rounded-lg transition"
+                  href={resolveDashboardHref()}
+                  className="text-xs font-semibold bg-indigo-50 text-[var(--color-brand-primary)] hover:bg-indigo-100 px-3.5 py-2 rounded-xl border border-indigo-100 transition"
                 >
                   {dashboardLabel()}
                 </Link>
                 <button
                   onClick={logout}
-                  className="text-sm font-medium text-[var(--color-brand-error)] hover:bg-red-50 px-3 py-2 rounded-lg transition"
+                  className="text-xs font-semibold text-[var(--color-brand-error)] hover:bg-red-50 px-3 py-2 rounded-xl transition"
                 >
                   Logout
                 </button>
@@ -199,7 +261,7 @@ export default function Navbar() {
                 </Link>
                 <Link
                   href="/register"
-                  className="text-sm font-medium bg-[var(--color-brand-primary)] hover:bg-[var(--color-brand-primary-hover)] text-white px-4 py-2 rounded-lg shadow-sm transition"
+                  className="text-sm font-medium bg-[var(--color-brand-primary)] hover:bg-[var(--color-brand-primary-hover)] text-white px-4 py-2 rounded-xl shadow-sm transition"
                 >
                   Get Started
                 </Link>
@@ -245,9 +307,9 @@ export default function Navbar() {
             {user ? (
               <>
                 <Link
-                  href={getDashboardPath(user.role)}
+                  href={resolveDashboardHref()}
                   onClick={() => setIsOpen(false)}
-                  className="block w-full text-center px-4 py-2 bg-indigo-50 text-[var(--color-brand-primary)] font-medium rounded-lg text-sm"
+                  className="block w-full text-center px-4 py-2 bg-indigo-50 text-[var(--color-brand-primary)] font-medium rounded-xl text-sm"
                 >
                   {dashboardLabel()}
                 </Link>
@@ -256,7 +318,7 @@ export default function Navbar() {
                     logout();
                     setIsOpen(false);
                   }}
-                  className="block w-full text-center px-4 py-2 border border-red-200 text-[var(--color-brand-error)] rounded-lg text-sm font-medium hover:bg-red-50"
+                  className="block w-full text-center px-4 py-2 border border-red-200 text-[var(--color-brand-error)] rounded-xl text-sm font-medium hover:bg-red-50"
                 >
                   Logout
                 </button>
@@ -266,14 +328,14 @@ export default function Navbar() {
                 <Link
                   href="/login"
                   onClick={() => setIsOpen(false)}
-                  className="block w-full text-center px-4 py-2 border border-[var(--color-brand-border)] rounded-lg text-sm font-medium text-[var(--color-brand-text-main)] hover:bg-gray-50"
+                  className="block w-full text-center px-4 py-2 border border-[var(--color-brand-border)] rounded-xl text-sm font-medium text-[var(--color-brand-text-main)] hover:bg-gray-50"
                 >
                   Sign In
                 </Link>
                 <Link
                   href="/register"
                   onClick={() => setIsOpen(false)}
-                  className="block w-full text-center px-4 py-2 bg-[var(--color-brand-primary)] hover:bg-[var(--color-brand-primary-hover)] text-white rounded-lg text-sm font-medium shadow-sm"
+                  className="block w-full text-center px-4 py-2 bg-[var(--color-brand-primary)] hover:bg-[var(--color-brand-primary-hover)] text-white rounded-xl text-sm font-medium shadow-sm"
                 >
                   Get Started
                 </Link>
