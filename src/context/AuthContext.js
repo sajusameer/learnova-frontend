@@ -1,201 +1,122 @@
-// 'use client';
-
-// import { createContext, useContext, useState, useEffect } from 'react';
-// import { useRouter } from 'next/navigation';
-// import { authService } from '@/services/authService';
-
-// const AuthContext = createContext(null);
-
-// export function AuthProvider({ children }) {
-//   const [user, setUser] = useState(null);
-//   const [token, setToken] = useState(null);
-//   const [loading, setLoading] = useState(true);
-//   const router = useRouter();
-
-//   // Helper to determine dashboard path based on role
-//   const getDashboardPath = (roleName) => {
-//     switch (roleName?.toLowerCase()) {
-//       case 'admin':
-//         return '/admin';
-//       case 'instructor':
-//         return '/instructor';
-//       case 'content manager':
-//         return '/content-manager';
-//       case 'student':
-//       default:
-//         return '/dashboard';
-//     }
-//   };
-
-//   // Restore session from localStorage on initial render
-//   useEffect(() => {
-//     const initAuth = async () => {
-//       const storedToken = localStorage.getItem('learnova_token');
-//       if (storedToken) {
-//         try {
-//           const userData = await authService.getMe(storedToken);
-//           setUser(userData);
-//           setToken(storedToken);
-//         } catch (err) {
-//           console.error('Session restoration failed:', err);
-//           localStorage.removeItem('learnova_token');
-//           setUser(null);
-//           setToken(null);
-//         }
-//       }
-//       setLoading(false);
-//     };
-
-//     initAuth();
-//   }, []);
-
-//   const login = async (identifier, password) => {
-//     const data = await authService.login(identifier, password);
-//     localStorage.setItem('learnova_token', data.jwt);
-//     setToken(data.jwt);
-
-//     // Fetch complete user profile with role populated
-//     const fullUser = await authService.getMe(data.jwt);
-//     setUser(fullUser);
-
-//     const redirectPath = getDashboardPath(fullUser.role?.name);
-//     router.push(redirectPath);
-//     return fullUser;
-//   };
-
-//   const register = async (username, email, password) => {
-//     const data = await authService.register(username, email, password);
-//     localStorage.setItem('learnova_token', data.jwt);
-//     setToken(data.jwt);
-
-//     const fullUser = await authService.getMe(data.jwt);
-//     setUser(fullUser);
-
-//     router.push('/dashboard');
-//     return fullUser;
-//   };
-
-//   const logout = () => {
-//     localStorage.removeItem('learnova_token');
-//     setUser(null);
-//     setToken(null);
-//     router.push('/login');
-//   };
-
-//   return (
-//     <AuthContext.Provider
-//       value={{
-//         user,
-//         token,
-//         loading,
-//         login,
-//         register,
-//         logout,
-//         getDashboardPath,
-//       }}
-//     >
-//       {children}
-//     </AuthContext.Provider>
-//   );
-// }
-
-// export function useAuth() {
-//   const context = useContext(AuthContext);
-//   if (!context) {
-//     throw new Error('useAuth must be used within an AuthProvider');
-//   }
-//   return context;
-// }
 'use client';
 
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { authService } from '@/services/authService';
+import { fetchFromStrapi } from '@/lib/api';
 
-const AuthContext = createContext(null);
+const AuthContext = createContext();
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
   const [loading, setLoading] = useState(true);
+  const isLoggingOut = useRef(false);
   const router = useRouter();
 
-  // Helper to determine dashboard path based on role
-  const getDashboardPath = (roleObj) => {
-    // roleObj হতে পারে স্ট্রিং অথবা অবজেক্ট { name: 'Content Manager', type: 'content-manager' }
-    const roleString = typeof roleObj === 'string' 
-      ? roleObj 
-      : (roleObj?.name || roleObj?.type || '');
-
-    const normalized = roleString.toLowerCase().replace(/[\s-_]+/g, '');
-
-    if (normalized === 'admin') {
-      return '/admin';
-    }
-    if (normalized === 'instructor') {
-      return '/instructor';
-    }
-    if (normalized.includes('content')) {
-      return '/content-manager';
-    }
-
-    return '/dashboard'; // Student / Default
-  };
-
-  // Restore session from localStorage on initial render
+  // Initialize session on mount
   useEffect(() => {
-    const initAuth = async () => {
-      const storedToken = localStorage.getItem('learnova_token');
-      if (storedToken) {
-        try {
-          const userData = await authService.getMe(storedToken);
-          setUser(userData);
+    const initializeAuth = async () => {
+      try {
+        const storedToken =
+          localStorage.getItem('learnova_token') || sessionStorage.getItem('learnova_token');
+        if (!storedToken) {
+          setLoading(false);
+          return;
+        }
+
+        // Validate token against Strapi
+        const me = await fetchFromStrapi('/users/me?populate=role', { token: storedToken });
+        if (me && (me.id || me._id)) {
+          setUser(me);
           setToken(storedToken);
-        } catch (err) {
-          console.error('Session restoration failed:', err);
+        } else {
           localStorage.removeItem('learnova_token');
+          sessionStorage.removeItem('learnova_token');
+          localStorage.removeItem('learnova_user');
           setUser(null);
           setToken(null);
         }
+      } catch (err) {
+        console.warn('Session restoration failed:', err.message);
+        localStorage.removeItem('learnova_token');
+        sessionStorage.removeItem('learnova_token');
+        localStorage.removeItem('learnova_user');
+        setUser(null);
+        setToken(null);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     };
 
-    initAuth();
+    initializeAuth();
   }, []);
 
+  // Login handler
   const login = async (identifier, password) => {
-    const data = await authService.login(identifier, password);
-    localStorage.setItem('learnova_token', data.jwt);
-    setToken(data.jwt);
+    const data = await fetchFromStrapi('/auth/local', {
+      method: 'POST',
+      body: JSON.stringify({ identifier, password }),
+    });
 
-    // Fetch complete user profile with role populated
-    const fullUser = await authService.getMe(data.jwt);
-    console.log('Logged in user data:', fullUser); // ব্রাউজার কনসোলে দেখার জন্য
-    setUser(fullUser);
+    if (data.jwt && data.user) {
+      localStorage.setItem('learnova_token', data.jwt);
+      localStorage.setItem('learnova_user', JSON.stringify(data.user));
+      setToken(data.jwt);
 
-    const redirectPath = getDashboardPath(fullUser.role);
-    router.push(redirectPath);
-    return fullUser;
+      try {
+        const fullUser = await fetchFromStrapi('/users/me?populate=role', { token: data.jwt });
+        const finalUser = fullUser || data.user;
+        setUser(finalUser);
+        return { ...data, user: finalUser };
+      } catch {
+        setUser(data.user);
+        return data;
+      }
+    } else {
+      throw new Error(data?.error?.message || 'Login failed');
+    }
   };
 
+  // Register handler
   const register = async (username, email, password) => {
-    const data = await authService.register(username, email, password);
-    localStorage.setItem('learnova_token', data.jwt);
-    setToken(data.jwt);
+    const data = await fetchFromStrapi('/auth/local/register', {
+      method: 'POST',
+      body: JSON.stringify({ username, email, password }),
+    });
 
-    const fullUser = await authService.getMe(data.jwt);
-    setUser(fullUser);
-
-    router.push('/dashboard');
-    return fullUser;
+    if (data.jwt && data.user) {
+      localStorage.setItem('learnova_token', data.jwt);
+      localStorage.setItem('learnova_user', JSON.stringify(data.user));
+      setToken(data.jwt);
+      setUser(data.user);
+      return data;
+    } else {
+      throw new Error(data?.error?.message || 'Registration failed');
+    }
   };
 
-  const logout = () => {
+  // Logout handler: Set flag first, clear storage, and instantly replace URL with root '/'
+  const logout = useCallback(() => {
+    isLoggingOut.current = true;
+
     localStorage.removeItem('learnova_token');
-    setUser(null);
-    setToken(null);
-    router.push('/login');
+    localStorage.removeItem('learnova_user');
+    sessionStorage.removeItem('learnova_token');
+    sessionStorage.removeItem('learnova_user');
+
+    // Perform atomic redirect
+    window.location.replace('/');
+  }, []);
+
+  // Dynamic Dashboard Path Resolver
+  const getDashboardPath = (roleObj) => {
+    const roleString =
+      roleObj?.name || roleObj?.type || user?.role?.name || user?.role?.type || user?.username || '';
+    const normalized = roleString.toLowerCase().replace(/[\s-_]+/g, '');
+
+    if (normalized.includes('admin')) return '/admin';
+    if (normalized.includes('content') || normalized.includes('manager')) return '/content-manager';
+    return '/dashboard';
   };
 
   return (
@@ -204,6 +125,7 @@ export function AuthProvider({ children }) {
         user,
         token,
         loading,
+        isLoggingOut: isLoggingOut.current,
         login,
         register,
         logout,
@@ -215,10 +137,4 @@ export function AuthProvider({ children }) {
   );
 }
 
-export function useAuth() {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
-}
+export const useAuth = () => useContext(AuthContext);

@@ -14,7 +14,7 @@ export default function BlogPostDetailPage() {
     const loadPost = async () => {
       try {
         const data = await blogService.getPostById(id);
-        console.log('Strapi Blog Post Data:', data); // Inspect in F12 console
+        console.log('Strapi Blog Post Data:', data); 
         setPost(data);
       } catch (err) {
         console.error('Failed to load article:', err);

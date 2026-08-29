@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import Logo from '@/components/ui/Logo';
 import { useAuth } from '@/context/AuthContext';
 
@@ -12,8 +11,7 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  const { login, getDashboardPath } = useAuth();
-  const router = useRouter();
+  const { login } = useAuth();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -21,14 +19,34 @@ export default function LoginPage() {
     setSubmitting(true);
 
     try {
-      const loggedInUser = await login(identifier, password);
+      const res = await login(identifier, password);
+      const userObj = res?.user || res;
+
+      // 1. Extract role information from all possible Strapi representations
+      const roleName = (
+        userObj?.role?.name ||
+        userObj?.role?.type ||
+        ''
+      ).toLowerCase();
       
-      // Role অনুযায়ী নিশ্চিত রিডাইরেক্ট
-      const targetPath = getDashboardPath(loggedInUser?.role);
-      router.push(targetPath);
+      const userName = (userObj?.username || identifier || '').toLowerCase();
+
+      // 2. Direct hard redirect based on priority
+      if (roleName.includes('admin') || userName.includes('admin')) {
+        window.location.href = '/admin';
+      } else if (
+        roleName.includes('content') ||
+        roleName.includes('manager') ||
+        userName.includes('content')
+      ) {
+        window.location.href = '/content-manager';
+      } else if (roleName.includes('instructor') || userName.includes('instructor')) {
+        window.location.href = '/instructor';
+      } else {
+        window.location.href = '/dashboard';
+      }
     } catch (err) {
       setError(err.message || 'Invalid email/username or password');
-    } finally {
       setSubmitting(false);
     }
   };
@@ -38,8 +56,12 @@ export default function LoginPage() {
       <div className="w-full max-w-md bg-white border border-[var(--color-brand-border)] rounded-2xl p-8 shadow-sm space-y-6">
         <div className="flex flex-col items-center text-center space-y-2">
           <Logo />
-          <h2 className="text-2xl font-bold tracking-tight text-[var(--color-brand-text-main)] pt-2">Welcome Back</h2>
-          <p className="text-sm text-[var(--color-brand-text-muted)]">Sign in to your Learnova account</p>
+          <h2 className="text-2xl font-bold tracking-tight text-[var(--color-brand-text-main)] pt-2">
+            Welcome Back
+          </h2>
+          <p className="text-sm text-[var(--color-brand-text-muted)]">
+            Sign in to your Learnova account
+          </p>
         </div>
 
         {error && (
@@ -58,7 +80,7 @@ export default function LoginPage() {
               required
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
-              placeholder="e.g. content@example.com"
+              placeholder="e.g. content_lead or admin"
               className="w-full px-4 py-2.5 rounded-xl border border-[var(--color-brand-border)] bg-white text-sm text-[var(--color-brand-text-main)] focus:outline-none focus:ring-2 focus:ring-[var(--color-brand-primary)]"
             />
           </div>

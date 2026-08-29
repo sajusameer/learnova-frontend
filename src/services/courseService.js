@@ -1,17 +1,3 @@
-// import { fetchFromStrapi } from '@/lib/api';
-
-// export const courseService = {
-//   // Fetch all published courses with relations
-//   async getCourses() {
-//     return await fetchFromStrapi('/courses?populate=*');
-//   },
-
-//   // Fetch a single course by its slug
-//   async getCourseBySlug(slug) {
-//     const res = await fetchFromStrapi(`/courses?filters[slug][$eq]=${slug}&populate[instructor]=*&populate[lessons]=*&populate[thumbnail]=*`);
-//     return res.data?.[0] || null;
-//   },
-// };
 
 import { fetchFromStrapi } from '@/lib/api';
 
@@ -24,7 +10,7 @@ export const courseService = {
   // Fetch single course (Fallback mechanism)
   async getCourseBySlug(identifier) {
     try {
-      // 1. All courses এনে slug বা id ম্যাচ করানো (কখনোই ফিল্টার এরর দিবে না)
+      // 1. All courses 
       const res = await fetchFromStrapi('/courses?populate=*');
       const courses = res.data || [];
 
