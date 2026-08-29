@@ -148,6 +148,12 @@ export default function DashboardPage() {
                         View Page
                       </Link>
                       <Link
+    href={`/instructor/courses/${slugOrId}/edit`}
+    className="flex-1 text-center py-2 px-3 bg-indigo-50 hover:bg-indigo-600 text-indigo-700 hover:text-white font-semibold rounded-xl text-xs transition"
+  >
+    Edit Course
+  </Link>
+                      <Link
                         href={`/courses/${slugOrId}/learn`}
                         className="flex-1 text-center py-2 px-3 bg-indigo-50 hover:bg-indigo-600 text-indigo-700 hover:text-white font-semibold rounded-xl text-xs transition"
                       >
