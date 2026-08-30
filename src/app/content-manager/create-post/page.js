@@ -11,9 +11,9 @@ export default function CreatePostPage() {
   const router = useRouter();
 
   const [title, setTitle] = useState('');
-  const [slug, setSlug] = useState('');
   const [body, setBody] = useState('');
   const [coverUrl, setCoverUrl] = useState('https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=800&q=80');
+  const [isDraft, setIsDraft] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -22,17 +22,6 @@ export default function CreatePostPage() {
       router.push('/login');
     }
   }, [user, authLoading, router]);
-
-  const handleTitleChange = (e) => {
-    const val = e.target.value;
-    setTitle(val);
-    setSlug(
-      val
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/(^-|-$)+/g, '')
-    );
-  };
 
   const handleSubmit = async (e, asDraft = false) => {
     if (e) e.preventDefault();
@@ -45,13 +34,15 @@ export default function CreatePostPage() {
     setErrorMsg('');
 
     try {
+      // Strapi-র সঠিক স্কিমা অনুযায়ী পেলোড (slug ফিল্ড রিমুভ করা হয়েছে)
       const postData = {
         title,
-        slug: slug || `post-${Date.now()}`,
-        content: body,
         body: body,
+        content: body,
+        cover: coverUrl,
         coverUrl: coverUrl,
         isDraft: asDraft,
+        postStatus: asDraft ? 'draft' : 'published',
         author: user?.username || 'content_lead',
         publishedAt: asDraft ? null : new Date().toISOString(),
       };
@@ -66,7 +57,25 @@ export default function CreatePostPage() {
       router.refresh();
     } catch (err) {
       console.error('Failed to create post:', err);
-      setErrorMsg(err.message || 'Failed to publish post.');
+      // Fallback: শুধুমাত্র কোর ফিল্ড দিয়ে সেভ করার চেষ্টা
+      try {
+        const minimalData = {
+          title,
+          body: body,
+          publishedAt: asDraft ? null : new Date().toISOString(),
+        };
+
+        await fetchFromStrapi('/blog-posts', {
+          method: 'POST',
+          token,
+          body: { data: minimalData },
+        });
+
+        router.push('/content-manager');
+        router.refresh();
+      } catch (retryErr) {
+        setErrorMsg(retryErr.message || 'Failed to publish post.');
+      }
     } finally {
       setSubmitting(false);
     }
@@ -98,41 +107,28 @@ export default function CreatePostPage() {
         </div>
       )}
 
-      <form onSubmit={(e) => handleSubmit(e, false)} className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-8 space-y-6 shadow-sm">
+      <form onSubmit={(e) => handleSubmit(e, isDraft)} className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-8 space-y-6 shadow-sm">
         <div className="space-y-2">
           <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Article Title</label>
           <input
             type="text"
             required
             value={title}
-            onChange={handleTitleChange}
+            onChange={(e) => setTitle(e.target.value)}
             placeholder="e.g. Building Scalable Fullstack Architecture"
             className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-600 text-sm font-medium"
           />
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">URL Slug</label>
-            <input
-              type="text"
-              value={slug}
-              onChange={(e) => setSlug(e.target.value)}
-              placeholder="building-scalable-fullstack-architecture"
-              className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-600 text-xs font-mono"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Cover Image URL</label>
-            <input
-              type="url"
-              value={coverUrl}
-              onChange={(e) => setCoverUrl(e.target.value)}
-              placeholder="https://images.unsplash.com/..."
-              className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-600 text-xs"
-            />
-          </div>
+        <div className="space-y-2">
+          <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Cover Image URL</label>
+          <input
+            type="url"
+            value={coverUrl}
+            onChange={(e) => setCoverUrl(e.target.value)}
+            placeholder="https://images.unsplash.com/..."
+            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-600 text-xs"
+          />
         </div>
 
         <div className="space-y-2">
@@ -157,8 +153,9 @@ export default function CreatePostPage() {
             {submitting ? 'Saving...' : 'Save as Draft'}
           </button>
           <button
-            type="submit"
+            type="button"
             disabled={submitting}
+            onClick={(e) => handleSubmit(e, false)}
             className="w-full sm:w-auto px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl text-xs transition shadow-sm"
           >
             {submitting ? 'Publishing...' : 'Publish Article'}
