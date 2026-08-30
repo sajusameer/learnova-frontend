@@ -382,7 +382,7 @@ export default function DashboardPage() {
           </div>
 
           <Link
-            href="/instructor/create-course"
+          href="/instructor/courses/new"
             className="px-6 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl text-sm transition shadow-sm"
           >
             + Create New Course

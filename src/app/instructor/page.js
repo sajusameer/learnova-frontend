@@ -91,7 +91,7 @@ export default function InstructorDashboard() {
         </div>
 
         <Link
-          href="/instructor/create-course"
+        href="/instructor/courses/new"
           className="px-6 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl text-sm transition shadow-sm"
         >
           + Create New Course
@@ -167,6 +167,12 @@ export default function InstructorDashboard() {
                     >
                       Edit Course
                     </Link>
+                    <Link
+    href={`/instructor/courses/${course.documentId || course.id}/quiz/create`}
+    className="px-3 py-1.5 bg-emerald-50 text-emerald-600 rounded-lg text-xs font-semibold"
+  >
+    + Quiz
+  </Link>
                   </div>
                 </div>
               );
