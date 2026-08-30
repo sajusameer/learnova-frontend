@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { instructorService } from '@/services/instructorService';
 import { enrollmentService } from '@/services/enrollmentService';
+import { quizService } from '@/services/quizService';
 import { fetchFromStrapi } from '@/lib/api';
 
 export default function DashboardPage() {
@@ -15,12 +16,28 @@ export default function DashboardPage() {
   const [studentCourses, setStudentCourses] = useState([]);
   const [instructorCourses, setInstructorCourses] = useState([]);
   const [instructorStudentProgress, setInstructorStudentProgress] = useState([]);
+  const [allPlatformCourses, setAllPlatformCourses] = useState([]);
+  const [allUsersList, setAllUsersList] = useState([]);
+  const [quizResults, setQuizResults] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // Role detection
+  const roleType = user?.role?.type?.toLowerCase() || '';
+  const roleName = user?.role?.name?.toLowerCase() || '';
+  const username = user?.username?.toLowerCase() || '';
+
+  const isContentManager =
+    roleType === 'content-manager' ||
+    roleType === 'admin' ||
+    roleName.includes('content') ||
+    roleName.includes('manager') ||
+    roleName.includes('admin') ||
+    username.includes('manager') ||
+    username.includes('admin');
+
   const isInstructor =
-    user?.role?.type === 'instructor' ||
-    user?.role?.name?.toLowerCase().includes('instructor') ||
-    user?.username?.toLowerCase().includes('instructor');
+    !isContentManager &&
+    (roleType === 'instructor' || roleName.includes('instructor') || username.includes('instructor'));
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -33,22 +50,49 @@ export default function DashboardPage() {
       try {
         const uId = user.documentId || user.id;
 
-        if (isInstructor) {
+        if (isContentManager) {
+          // Content Manager / Admin Flow: Fetch entire platform inventory
+          const [coursesRes, usersRes, enrollmentsRes, progressesRes, quizzesRes] = await Promise.all([
+            fetchFromStrapi('/courses?populate=*', { token }).catch(() => ({ data: [] })),
+            fetchFromStrapi('/users', { token }).catch(() => []),
+            fetchFromStrapi('/enrollments?populate=*', { token }).catch(() => ({ data: [] })),
+            fetchFromStrapi('/lesson-progresses?populate=*', { token }).catch(() => ({ data: [] })),
+            fetchFromStrapi('/quiz-results?populate=*', { token }).catch(() => ({ data: [] })),
+          ]);
+
+          const courses = Array.isArray(coursesRes?.data) ? coursesRes.data : [];
+          const users = Array.isArray(usersRes) ? usersRes : Array.isArray(usersRes?.data) ? usersRes.data : [];
+          const quizzes = Array.isArray(quizzesRes?.data) ? quizzesRes.data : [];
+
+          setAllPlatformCourses(courses);
+          setAllUsersList(users);
+          setQuizResults(quizzes);
+
+          // All student enrollments & progress for platform overview
+          const courseIds = courses.map((c) => c.documentId || c.id);
+          const progressData = await instructorService.getStudentsProgressForCourses(courseIds, token);
+          setInstructorStudentProgress(progressData);
+        } else if (isInstructor) {
           // Instructor Flow
           const created = await instructorService.getInstructorCourses(uId, token, user.username);
           setInstructorCourses(created);
 
           if (created.length > 0) {
             const courseIds = created.map((c) => c.documentId || c.id);
-            const progressData = await instructorService.getStudentsProgressForCourses(courseIds, token);
+            const [progressData, rawQuizzes] = await Promise.all([
+              instructorService.getStudentsProgressForCourses(courseIds, token),
+              quizService.getInstructorCourseQuizResults(courseIds, token),
+            ]);
             setInstructorStudentProgress(progressData);
+            setQuizResults(rawQuizzes);
           }
         } else {
-          // Student Flow: Fetch Enrollments, All Courses with Lessons, and Progresses
-          const [enrollments, allCoursesRes, progresses] = await Promise.all([
+          // Student Flow
+          const [enrollments, allCoursesRes, progresses, userQuizzes] = await Promise.all([
             enrollmentService.getStudentEnrollments(uId, token),
             fetchFromStrapi('/courses?populate=*', { token }).catch(() => ({ data: [] })),
             enrollmentService.getLessonProgress(null, uId, token),
+            quizService.getStudentQuizResults(uId, token),
           ]);
 
           const allCoursesList = Array.isArray(allCoursesRes?.data) ? allCoursesRes.data : [];
@@ -59,7 +103,6 @@ export default function DashboardPage() {
             const cData = courseItem?.attributes || courseItem || {};
             const rawCId = courseItem?.documentId || courseItem?.id || cData.id || cData.documentId;
 
-            // Find full course metadata from allCourses to guarantee lessons array exists
             const matchedFullCourse = allCoursesList.find((c) => {
               const fullData = c.attributes || c;
               return (
@@ -79,16 +122,14 @@ export default function DashboardPage() {
               cData.lessons ||
               [];
 
-            // Match completed lessons for this course
             const completedForCourse = progresses.filter((p) => {
               const pData = p.attributes || p;
               const pCourse = pData.course?.data || pData.course;
               const pCourseAttr = pCourse?.attributes || pCourse || {};
               const pCourseId = pCourse?.documentId || pCourse?.id || pCourseAttr?.documentId || pCourseAttr?.id || pData.course;
 
-              // Check match by ID or check if the completed lesson belongs to this course's lesson list
               const isDirectCourseMatch = pCourseId && String(pCourseId) === String(targetCourseId);
-              
+
               const pLesson = pData.lesson?.data || pData.lesson;
               const pLessonAttr = pLesson?.attributes || pLesson || {};
               const pLessonId = pLesson?.documentId || pLesson?.id || pLessonAttr?.documentId || pLessonAttr?.id || pData.lesson;
@@ -116,28 +157,198 @@ export default function DashboardPage() {
             };
           });
 
-          // Deduplicate courses
           const uniqueCourses = processedCourses.filter(
             (course, index, self) => index === self.findIndex((c) => String(c.id) === String(course.id))
           );
 
           setStudentCourses(uniqueCourses);
+          setQuizResults(userQuizzes);
         }
       } catch (err) {
-        console.warn('Dashboard data fetch note:', err.message);
+        console.warn('Dashboard fetch note:', err.message);
       } finally {
         setLoading(false);
       }
     };
 
     loadData();
-  }, [user, token, authLoading, isInstructor, router]);
+  }, [user, token, authLoading, isContentManager, isInstructor, router]);
 
   if (authLoading || loading) {
     return (
       <div className="max-w-7xl mx-auto px-4 py-16 text-center space-y-4">
         <div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto" />
         <p className="text-sm text-[var(--color-brand-text-muted)]">Loading dashboard metrics...</p>
+      </div>
+    );
+  }
+
+  // ================= CONTENT MANAGER / ADMIN VIEW =================
+  if (isContentManager) {
+    const totalCourses = allPlatformCourses.length;
+    const totalLessons = allPlatformCourses.reduce((acc, c) => {
+      const cData = c.attributes || c;
+      const lList = cData.lessons?.data || cData.lessons || [];
+      return acc + lList.length;
+    }, 0);
+    const totalUsers = allUsersList.length;
+
+    return (
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-10">
+        {/* Manager Banner */}
+        <div className="bg-white border border-[var(--color-brand-border)] rounded-3xl p-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 shadow-sm">
+          <div className="space-y-1.5">
+            <span className="text-xs font-bold text-purple-700 uppercase tracking-wider bg-purple-50 px-3.5 py-1.5 rounded-full border border-purple-200">
+              Content Manager & Admin Console
+            </span>
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-[var(--color-brand-text-main)]">
+              Welcome back, {user?.username}!
+            </h1>
+            <p className="text-sm text-[var(--color-brand-text-muted)]">
+              Oversee platform content inventory, manage global courses, and track student performance.
+            </p>
+          </div>
+
+          <div className="flex gap-3">
+            <Link
+              href="/instructor/create-course"
+              className="px-6 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl text-sm transition shadow-sm"
+            >
+              + Add New Course
+            </Link>
+          </div>
+        </div>
+
+        {/* Global Metric Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-6">
+          <div className="bg-white border border-[var(--color-brand-border)] rounded-2xl p-6 space-y-2 shadow-sm">
+            <p className="text-xs font-semibold text-[var(--color-brand-text-muted)] uppercase tracking-wider">Total Courses</p>
+            <p className="text-3xl font-black text-[var(--color-brand-text-main)]">{totalCourses}</p>
+          </div>
+
+          <div className="bg-white border border-[var(--color-brand-border)] rounded-2xl p-6 space-y-2 shadow-sm">
+            <p className="text-xs font-semibold text-[var(--color-brand-text-muted)] uppercase tracking-wider">Published Lessons</p>
+            <p className="text-3xl font-black text-indigo-600">{totalLessons}</p>
+          </div>
+
+          <div className="bg-white border border-[var(--color-brand-border)] rounded-2xl p-6 space-y-2 shadow-sm">
+            <p className="text-xs font-semibold text-[var(--color-brand-text-muted)] uppercase tracking-wider">Total Users</p>
+            <p className="text-3xl font-black text-purple-600">{totalUsers > 0 ? totalUsers : 'Active'}</p>
+          </div>
+
+          <div className="bg-white border border-[var(--color-brand-border)] rounded-2xl p-6 space-y-2 shadow-sm">
+            <p className="text-xs font-semibold text-[var(--color-brand-text-muted)] uppercase tracking-wider">Quiz Submissions</p>
+            <p className="text-3xl font-black text-green-600">{quizResults.length}</p>
+          </div>
+        </div>
+
+        {/* Global Course Inventory Table */}
+        <div className="space-y-4">
+          <div className="flex justify-between items-center">
+            <h2 className="text-lg font-bold text-[var(--color-brand-text-main)]">Global Courses Catalog</h2>
+            <span className="text-xs text-[var(--color-brand-text-muted)]">{totalCourses} courses available</span>
+          </div>
+
+          <div className="bg-white border border-[var(--color-brand-border)] rounded-2xl overflow-hidden shadow-sm">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 uppercase font-semibold">
+                  <tr>
+                    <th className="p-4">Course Title</th>
+                    <th className="p-4">Category</th>
+                    <th className="p-4">Total Lessons</th>
+                    <th className="p-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {allPlatformCourses.map((c, idx) => {
+                    const cData = c.attributes || c;
+                    const lessons = cData.lessons?.data || cData.lessons || [];
+                    const cId = c.documentId || c.id || cData.id;
+
+                    return (
+                      <tr key={`${cId}-${idx}`} className="hover:bg-slate-50/50">
+                        <td className="p-4 font-semibold text-[var(--color-brand-text-main)]">
+                          {cData.title}
+                          <span className="block text-[10px] font-normal text-[var(--color-brand-text-muted)]">
+                            ID: {cId}
+                          </span>
+                        </td>
+                        <td className="p-4">
+                          <span className="px-2.5 py-1 rounded-md bg-indigo-50 text-indigo-700 font-bold uppercase tracking-wider text-[10px]">
+                            {cData.category || 'Development'}
+                          </span>
+                        </td>
+                        <td className="p-4 text-slate-700 font-medium">{lessons.length} Lessons</td>
+                        <td className="p-4 text-right space-x-2">
+                          <Link
+                            href={`/courses/${cId}`}
+                            className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-lg font-semibold transition"
+                          >
+                            View
+                          </Link>
+                          <Link
+                            href={`/instructor/courses/${cId}/edit`}
+                            className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg font-semibold transition"
+                          >
+                            Edit
+                          </Link>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        {/* Global Student Enrollments & Progress */}
+        <div className="space-y-4">
+          <h2 className="text-lg font-bold text-[var(--color-brand-text-main)]">Student Progress Monitoring</h2>
+          <div className="bg-white border border-[var(--color-brand-border)] rounded-2xl overflow-hidden shadow-sm">
+            {instructorStudentProgress.length === 0 ? (
+              <div className="p-8 text-center text-xs text-[var(--color-brand-text-muted)]">No active student enrollments found.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 uppercase font-semibold">
+                    <tr>
+                      <th className="p-4">Student</th>
+                      <th className="p-4">Course</th>
+                      <th className="p-4">Lessons Completed</th>
+                      <th className="p-4">Progress</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {instructorStudentProgress.map((item, idx) => (
+                      <tr key={item.id || idx} className="hover:bg-slate-50/50">
+                        <td className="p-4 font-semibold text-[var(--color-brand-text-main)]">
+                          {item.studentName}
+                          <span className="block text-[10px] font-normal text-[var(--color-brand-text-muted)]">
+                            {item.studentEmail}
+                          </span>
+                        </td>
+                        <td className="p-4 text-[var(--color-brand-text-main)]">{item.courseTitle}</td>
+                        <td className="p-4 text-[var(--color-brand-text-muted)]">
+                          {item.completedLessons} / {item.totalLessons}
+                        </td>
+                        <td className="p-4">
+                          <div className="flex items-center gap-2">
+                            <div className="w-24 bg-slate-100 rounded-full h-2 overflow-hidden">
+                              <div className="bg-indigo-600 h-2 rounded-full" style={{ width: `${item.percent}%` }} />
+                            </div>
+                            <span className="font-bold text-slate-700">{item.percent}%</span>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     );
   }
@@ -150,6 +361,10 @@ export default function DashboardPage() {
       const lList = cData.lessons?.data || cData.lessons || [];
       return acc + lList.length;
     }, 0);
+
+    const activeStudentsCount = new Set(
+      instructorStudentProgress.map((s) => s.studentId || s.studentEmail || s.studentName).filter(Boolean)
+    ).size;
 
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-10">
@@ -187,20 +402,18 @@ export default function DashboardPage() {
 
           <div className="bg-white border border-[var(--color-brand-border)] rounded-2xl p-6 space-y-2 shadow-sm">
             <p className="text-xs font-semibold text-[var(--color-brand-text-muted)] uppercase tracking-wider">Active Students</p>
-            <p className="text-3xl font-black text-green-600">{instructorStudentProgress.length}</p>
+            <p className="text-3xl font-black text-green-600">{activeStudentsCount}</p>
           </div>
         </div>
 
         <div className="space-y-4">
           <h2 className="text-lg font-bold text-[var(--color-brand-text-main)]">My Published Courses</h2>
-
           {instructorCourses.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {instructorCourses.map((course, idx) => {
                 const cData = course.attributes || course;
                 const lessons = cData.lessons?.data || cData.lessons || [];
                 const courseId = course.documentId || course.id || cData.id;
-
                 return (
                   <div
                     key={`${courseId}-${idx}`}
@@ -211,15 +424,9 @@ export default function DashboardPage() {
                         <span className="px-2.5 py-1 rounded-md bg-indigo-50 text-indigo-700 font-bold uppercase tracking-wider text-[10px]">
                           {cData.category || 'Development'}
                         </span>
-                        <span className="text-[var(--color-brand-text-muted)] font-medium">
-                          {lessons.length} Lessons
-                        </span>
+                        <span className="text-[var(--color-brand-text-muted)] font-medium">{lessons.length} Lessons</span>
                       </div>
-
-                      <h3 className="text-base font-bold text-[var(--color-brand-text-main)] line-clamp-2">
-                        {cData.title}
-                      </h3>
-
+                      <h3 className="text-base font-bold text-[var(--color-brand-text-main)] line-clamp-2">{cData.title}</h3>
                       <p className="text-xs text-[var(--color-brand-text-muted)] line-clamp-2">
                         {cData.description || 'No description provided.'}
                       </p>
@@ -256,13 +463,12 @@ export default function DashboardPage() {
           )}
         </div>
 
+        {/* Student Progress Table */}
         <div className="space-y-4">
           <h2 className="text-lg font-bold text-[var(--color-brand-text-main)]">Enrolled Students Progress</h2>
           <div className="bg-white border border-[var(--color-brand-border)] rounded-2xl overflow-hidden shadow-sm">
             {instructorStudentProgress.length === 0 ? (
-              <div className="p-8 text-center text-xs text-[var(--color-brand-text-muted)]">
-                No students enrolled in your courses yet.
-              </div>
+              <div className="p-8 text-center text-xs text-[var(--color-brand-text-muted)]">No students enrolled yet.</div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
@@ -290,16 +496,71 @@ export default function DashboardPage() {
                         <td className="p-4">
                           <div className="flex items-center gap-2">
                             <div className="w-24 bg-slate-100 rounded-full h-2 overflow-hidden">
-                              <div
-                                className="bg-indigo-600 h-2 rounded-full"
-                                style={{ width: `${item.percent}%` }}
-                              />
+                              <div className="bg-indigo-600 h-2 rounded-full" style={{ width: `${item.percent}%` }} />
                             </div>
                             <span className="font-bold text-slate-700">{item.percent}%</span>
                           </div>
                         </td>
                       </tr>
                     ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Instructor: Student Quiz Results Section */}
+        <div className="space-y-4">
+          <h2 className="text-lg font-bold text-[var(--color-brand-text-main)]">Quiz & Assessment Submissions</h2>
+          <div className="bg-white border border-[var(--color-brand-border)] rounded-2xl overflow-hidden shadow-sm">
+            {quizResults.length === 0 ? (
+              <div className="p-8 text-center text-xs text-[var(--color-brand-text-muted)]">No quiz submissions recorded yet.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 uppercase font-semibold">
+                    <tr>
+                      <th className="p-4">Student</th>
+                      <th className="p-4">Quiz / Assessment</th>
+                      <th className="p-4">Score</th>
+                      <th className="p-4">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {quizResults.map((qr, idx) => {
+                      const data = qr.attributes || qr;
+                      const u = data.user?.data?.attributes || data.user || {};
+                      const q = data.quiz?.data?.attributes || data.quiz || {};
+                      const score = Number(data.score ?? 0);
+                      const total = Number(data.totalQuestions ?? 2);
+                      const percent = total > 0 ? Math.round((score / total) * 100) : 0;
+                      const passed = percent >= 60;
+
+                      return (
+                        <tr key={qr.id || idx} className="hover:bg-slate-50/50">
+                          <td className="p-4 font-semibold text-[var(--color-brand-text-main)]">
+                            {u.username || 'Student'}
+                            <span className="block text-[10px] font-normal text-[var(--color-brand-text-muted)]">
+                              {u.email || 'N/A'}
+                            </span>
+                          </td>
+                          <td className="p-4 text-[var(--color-brand-text-main)]">{q.title || 'Course Milestone Assessment'}</td>
+                          <td className="p-4 font-bold text-slate-700">
+                            {score} / {total} ({percent}%)
+                          </td>
+                          <td className="p-4">
+                            <span
+                              className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                                passed ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'
+                              }`}
+                            >
+                              {passed ? 'Passed' : 'Needs Review'}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -378,9 +639,7 @@ export default function DashboardPage() {
                     </span>
                   </div>
 
-                  <h3 className="text-base font-bold text-[var(--color-brand-text-main)] line-clamp-2">
-                    {course.title}
-                  </h3>
+                  <h3 className="text-base font-bold text-[var(--color-brand-text-main)] line-clamp-2">{course.title}</h3>
 
                   <div className="space-y-1.5 pt-2">
                     <div className="flex justify-between text-xs font-semibold text-[var(--color-brand-text-muted)]">
@@ -396,12 +655,20 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                <Link
-                  href={`/courses/${course.slug}/learn`}
-                  className="w-full py-2.5 text-center bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-semibold transition"
-                >
-                  {course.percent === 100 ? 'Review Course' : 'Continue Learning'}
-                </Link>
+                <div className="space-y-2 pt-2">
+                  <Link
+                    href={`/courses/${course.slug}/learn`}
+                    className="block w-full py-2.5 text-center bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-semibold transition"
+                  >
+                    {course.percent === 100 ? 'Review Course' : 'Continue Learning'}
+                  </Link>
+                  <Link
+                    href={`/courses/${course.slug}/quiz`}
+                    className="block w-full py-2 text-center bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-xl text-xs font-semibold transition border border-slate-200"
+                  >
+                    Take Assessment Quiz &rarr;
+                  </Link>
+                </div>
               </div>
             ))}
           </div>
@@ -416,6 +683,62 @@ export default function DashboardPage() {
             </Link>
           </div>
         )}
+      </div>
+
+      {/* Student: Quiz History Section */}
+      <div className="space-y-4">
+        <h2 className="text-lg font-bold text-[var(--color-brand-text-main)]">My Assessment Performance</h2>
+        <div className="bg-white border border-[var(--color-brand-border)] rounded-2xl overflow-hidden shadow-sm">
+          {quizResults.length === 0 ? (
+            <div className="p-8 text-center text-xs text-[var(--color-brand-text-muted)]">
+              You haven't attempted any assessment quizzes yet. Complete a course track and take the quiz!
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 uppercase font-semibold">
+                  <tr>
+                    <th className="p-4">Assessment Title</th>
+                    <th className="p-4">Score</th>
+                    <th className="p-4">Percentage</th>
+                    <th className="p-4">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {quizResults.map((qr, idx) => {
+                    const data = qr.attributes || qr;
+                    const q = data.quiz?.data?.attributes || data.quiz || {};
+                    const score = Number(data.score ?? 0);
+                    const total = Number(data.totalQuestions ?? 2);
+                    const percent = total > 0 ? Math.round((score / total) * 100) : 0;
+                    const passed = percent >= 60;
+
+                    return (
+                      <tr key={qr.id || idx} className="hover:bg-slate-50/50">
+                        <td className="p-4 font-semibold text-[var(--color-brand-text-main)]">
+                          {q.title || 'Course Milestone Assessment'}
+                        </td>
+                        <td className="p-4 text-slate-700 font-bold">
+                          {score} / {total}
+                        </td>
+                        <td className="p-4 text-slate-700 font-bold">{percent}%</td>
+                        <td className="p-4">
+                          <span
+                            className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                              passed ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'
+                            }`}
+                          >
+                            {passed ? 'Passed' : 'Needs Review'}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

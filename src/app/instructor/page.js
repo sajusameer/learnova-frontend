@@ -5,13 +5,15 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { instructorService } from '@/services/instructorService';
+import { quizService } from '@/services/quizService';
 
-export default function InstructorDashboardPage() {
-  const router = useRouter();
+export default function InstructorDashboard() {
   const { user, token, loading: authLoading } = useAuth();
+  const router = useRouter();
 
   const [courses, setCourses] = useState([]);
   const [studentProgressList, setStudentProgressList] = useState([]);
+  const [quizResults, setQuizResults] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -24,57 +26,61 @@ export default function InstructorDashboardPage() {
       if (!user || !token) return;
       try {
         const uId = user.documentId || user.id;
-        const uName = user.username;
 
-        const myCourses = await instructorService.getInstructorCourses(uId, token, uName);
-        setCourses(myCourses);
+        // Fetch instructor courses
+        const createdCourses = await instructorService.getInstructorCourses(uId, token, user.username);
+        setCourses(createdCourses);
 
-        if (myCourses.length > 0) {
-          const courseIds = myCourses.map((c) => c.documentId || c.id);
-          const progressData = await instructorService.getStudentsProgressForCourses(courseIds, token);
+        if (createdCourses.length > 0) {
+          const courseIds = createdCourses.map((c) => c.documentId || c.id);
+
+          // Fetch student progress and quiz results simultaneously
+          const [progressData, quizzesData] = await Promise.all([
+            instructorService.getStudentsProgressForCourses(courseIds, token),
+            quizService.getInstructorCourseQuizResults(courseIds, token),
+          ]);
+
           setStudentProgressList(progressData);
+          setQuizResults(quizzesData);
         }
       } catch (err) {
-        console.warn('Instructor data fetch note:', err.message);
+        console.error('Failed to load instructor analytics:', err);
       } finally {
         setLoading(false);
       }
     };
 
-    if (user && token) {
-      loadInstructorData();
-    }
+    loadInstructorData();
   }, [user, token, authLoading, router]);
-
-  const getCourseLessonsCount = (courseData) => {
-    if (!courseData) return 0;
-    if (Array.isArray(courseData.lessons)) return courseData.lessons.length;
-    if (Array.isArray(courseData.lessons?.data)) return courseData.lessons.data.length;
-    return 0;
-  };
 
   if (authLoading || loading) {
     return (
-      <div className="max-w-7xl mx-auto px-4 py-20 text-center space-y-4">
+      <div className="max-w-7xl mx-auto px-4 py-16 text-center space-y-4">
         <div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto" />
-        <p className="text-xs text-[var(--color-brand-text-muted)]">Loading Instructor Portal...</p>
+        <p className="text-sm text-[var(--color-brand-text-muted)]">Loading instructor portal...</p>
       </div>
     );
   }
 
-  let totalLessonsSum = 0;
-  courses.forEach((c) => {
-    const data = c.attributes || c;
-    totalLessonsSum += getCourseLessonsCount(data);
-  });
+  const totalLessonsSum = courses.reduce((acc, course) => {
+    const cData = course.attributes || course;
+    const lessons = cData.lessons?.data || cData.lessons || [];
+    return acc + lessons.length;
+  }, 0);
+
+  const activeStudentsCount = new Set(
+    studentProgressList
+      .map((s) => s.studentId || s.studentEmail || s.studentName)
+      .filter(Boolean)
+  ).size;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-10">
-      {/* Header Banner */}
+      {/* Top Banner */}
       <div className="bg-white border border-[var(--color-brand-border)] rounded-3xl p-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 shadow-sm">
         <div className="space-y-1.5">
           <span className="text-xs font-bold text-indigo-700 uppercase tracking-wider bg-indigo-50 px-3 py-1 rounded-full border border-indigo-100">
-            INSTRUCTOR PORTAL
+            Instructor Portal
           </span>
           <h1 className="text-2xl sm:text-3xl font-extrabold text-[var(--color-brand-text-main)]">
             Welcome back, {user?.username}!
@@ -86,13 +92,13 @@ export default function InstructorDashboardPage() {
 
         <Link
           href="/instructor/create-course"
-          className="px-6 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl text-sm transition shadow-sm flex items-center gap-1.5"
+          className="px-6 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl text-sm transition shadow-sm"
         >
-          <span>+</span> Create New Course
+          + Create New Course
         </Link>
       </div>
 
-      {/* Metric Cards
+      {/* Metric Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
         <div className="bg-white border border-[var(--color-brand-border)] rounded-2xl p-6 space-y-2 shadow-sm">
           <p className="text-xs font-semibold text-[var(--color-brand-text-muted)] uppercase tracking-wider">
@@ -112,110 +118,50 @@ export default function InstructorDashboardPage() {
           <p className="text-xs font-semibold text-[var(--color-brand-text-muted)] uppercase tracking-wider">
             Active Students
           </p>
-          <p className="text-3xl font-black text-green-600">{studentProgressList.length}</p>
+          <p className="text-3xl font-black text-green-600">{activeStudentsCount}</p>
         </div>
-      </div> */}
-{/* Metric Cards */}
-<div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-  <div className="bg-white border border-[var(--color-brand-border)] rounded-2xl p-6 space-y-2 shadow-sm">
-    <p className="text-xs font-semibold text-[var(--color-brand-text-muted)] uppercase tracking-wider">
-      Courses Created
-    </p>
-    <p className="text-3xl font-black text-[var(--color-brand-text-main)]">{courses.length}</p>
-  </div>
+      </div>
 
-  <div className="bg-white border border-[var(--color-brand-border)] rounded-2xl p-6 space-y-2 shadow-sm">
-    <p className="text-xs font-semibold text-[var(--color-brand-text-muted)] uppercase tracking-wider">
-      Total Lessons
-    </p>
-    <p className="text-3xl font-black text-indigo-600">{totalLessonsSum}</p>
-  </div>
-
-  {/* <div className="bg-white border border-[var(--color-brand-border)] rounded-2xl p-6 space-y-2 shadow-sm">
-    <p className="text-xs font-semibold text-[var(--color-brand-text-muted)] uppercase tracking-wider">
-      Active Students
-    </p>
-    <p className="text-3xl font-black text-green-600">
-      {new Set(studentProgressList.map((s) => s.studentEmail || s.studentName)).size}
-    </p>
-  </div> */}
-  {/* <div className="bg-white border border-[var(--color-brand-border)] rounded-2xl p-6 space-y-2 shadow-sm">
-  <p className="text-xs font-semibold text-[var(--color-brand-text-muted)] uppercase tracking-wider">
-    Active Students
-  </p>
-  <p className="text-3xl font-black text-green-600">
-    {new Set(studentProgressList.map((s) => s.studentEmail || s.studentName)).size}
-  </p>
-</div> */}
-<div className="bg-white border border-[var(--color-brand-border)] rounded-2xl p-6 space-y-2 shadow-sm">
-    <p className="text-xs font-semibold text-[var(--color-brand-text-muted)] uppercase tracking-wider">
-      Active Students
-    </p>
-    <p className="text-3xl font-black text-green-600">
-      {
-        new Set(
-          studentProgressList
-            .map((s) => s.studentId || s.studentEmail || s.studentName)
-            .filter(Boolean)
-        ).size
-      }
-    </p>
-  </div>
-</div>
-      {/* Published Courses Section */}
+      {/* Published Courses */}
       <div className="space-y-4">
         <h2 className="text-lg font-bold text-[var(--color-brand-text-main)]">My Published Courses</h2>
-
-        {courses.length === 0 ? (
-          <div className="bg-white border border-[var(--color-brand-border)] rounded-2xl p-10 text-center space-y-3">
-            <p className="text-sm text-[var(--color-brand-text-muted)]">You have not created any courses yet.</p>
-            <Link
-              href="/instructor/create-course"
-              className="inline-block px-4 py-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-xs font-semibold transition"
-            >
-              Create your first course &rarr;
-            </Link>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {courses.map((courseItem) => {
-              const data = courseItem.attributes || courseItem;
-              const courseId = courseItem.documentId || courseItem.id || data.id;
-              const lessonCount = getCourseLessonsCount(data);
+        {courses.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {courses.map((course, idx) => {
+              const cData = course.attributes || course;
+              const lessons = cData.lessons?.data || cData.lessons || [];
+              const courseId = course.documentId || course.id || cData.id;
 
               return (
                 <div
-                  key={courseId}
+                  key={`${courseId}-${idx}`}
                   className="bg-white border border-[var(--color-brand-border)] rounded-2xl p-6 flex flex-col justify-between space-y-6 shadow-sm hover:shadow-md transition"
                 >
                   <div className="space-y-3">
-                    <div className="flex items-center justify-between text-xs">
+                    <div className="flex justify-between items-center text-xs">
                       <span className="px-2.5 py-1 rounded-md bg-indigo-50 text-indigo-700 font-bold uppercase tracking-wider text-[10px]">
-                        {data.category || 'Development'}
+                        {cData.category || 'Development'}
                       </span>
                       <span className="text-[var(--color-brand-text-muted)] font-medium">
-                        {lessonCount} Lessons
+                        {lessons.length} Lessons
                       </span>
                     </div>
-
                     <h3 className="text-base font-bold text-[var(--color-brand-text-main)] line-clamp-2">
-                      {data.title || 'Untitled Masterclass'}
+                      {cData.title}
                     </h3>
-
-                    <p className="text-xs text-[var(--color-brand-text-muted)] line-clamp-2 leading-relaxed">
-                      {data.description || 'No description provided.'}
+                    <p className="text-xs text-[var(--color-brand-text-muted)] line-clamp-2">
+                      {cData.description || 'No description provided.'}
                     </p>
                   </div>
 
                   <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
                     <Link
-                      href={`/courses/${courseId}`}
+                      href={`/courses/${cData.slug || courseId}`}
                       className="flex-1 py-2 text-center bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-lg text-xs font-semibold transition"
                     >
                       View Page
                     </Link>
                     <Link
-                      // href={`/instructor/edit/${courseId}`}
                       href={`/instructor/courses/${courseId}/edit`}
                       className="flex-1 py-2 text-center bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-semibold transition"
                     >
@@ -226,13 +172,22 @@ export default function InstructorDashboardPage() {
               );
             })}
           </div>
+        ) : (
+          <div className="p-10 text-center bg-white border border-[var(--color-brand-border)] rounded-2xl space-y-3">
+            <p className="text-sm text-[var(--color-brand-text-muted)]">You haven't created any courses yet.</p>
+            <Link
+              href="/instructor/create-course"
+              className="inline-block px-4 py-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-xs font-semibold transition"
+            >
+              Create your first course &rarr;
+            </Link>
+          </div>
         )}
       </div>
 
-      {/* Student Progress Monitoring Section */}
+      {/* Enrolled Students Progress Table */}
       <div className="space-y-4">
         <h2 className="text-lg font-bold text-[var(--color-brand-text-main)]">Enrolled Students Progress</h2>
-
         <div className="bg-white border border-[var(--color-brand-border)] rounded-2xl overflow-hidden shadow-sm">
           {studentProgressList.length === 0 ? (
             <div className="p-8 text-center text-xs text-[var(--color-brand-text-muted)]">
@@ -275,6 +230,70 @@ export default function InstructorDashboardPage() {
                       </td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Quiz & Assessment Submissions Table */}
+      <div className="space-y-4">
+        <h2 className="text-lg font-bold text-[var(--color-brand-text-main)]">Quiz & Assessment Submissions</h2>
+        <div className="bg-white border border-[var(--color-brand-border)] rounded-2xl overflow-hidden shadow-sm">
+          {quizResults.length === 0 ? (
+            <div className="p-8 text-center text-xs text-[var(--color-brand-text-muted)]">
+              No assessment submissions recorded yet.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 uppercase font-semibold">
+                  <tr>
+                    <th className="p-4">Student</th>
+                    <th className="p-4">Quiz / Assessment</th>
+                    <th className="p-4">Score</th>
+                    <th className="p-4">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {quizResults.map((qr, idx) => {
+                    const data = qr.attributes || qr;
+                    const u = data.user?.data?.attributes || data.user || {};
+                    const q = data.quiz?.data?.attributes || data.quiz || {};
+                    const score = Number(data.score ?? 0);
+                    const total = Number(data.totalQuestions ?? 2);
+                    const percent = total > 0 ? Math.round((score / total) * 100) : 0;
+                    const passed = percent >= 60;
+
+                    return (
+                      <tr key={qr.id || idx} className="hover:bg-slate-50/50">
+                        <td className="p-4 font-semibold text-[var(--color-brand-text-main)]">
+                          {u.username || 'Student'}
+                          <span className="block text-[10px] font-normal text-[var(--color-brand-text-muted)]">
+                            {u.email || 'N/A'}
+                          </span>
+                        </td>
+                        <td className="p-4 text-[var(--color-brand-text-main)]">
+                          {q.title || 'Course Milestone Assessment'}
+                        </td>
+                        <td className="p-4 font-bold text-slate-700">
+                          {score} / {total} ({percent}%)
+                        </td>
+                        <td className="p-4">
+                          <span
+                            className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                              passed
+                                ? 'bg-green-50 text-green-700 border border-green-200'
+                                : 'bg-red-50 text-red-700 border border-red-200'
+                            }`}
+                          >
+                            {passed ? 'Passed' : 'Needs Review'}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
