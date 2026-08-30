@@ -4,16 +4,22 @@ export const enrollmentService = {
   // Check if current user is enrolled in a course
   async getEnrollment(courseId, userId, token) {
     try {
-      const res = await fetchFromStrapi(
-        `/enrollments?filters[$or][0][user][id][$eq]=${userId}&filters[$or][1][user][documentId][$eq]=${userId}&populate=*`,
-        { token }
-      );
-      const enrollments = res.data || [];
+      const res = await fetchFromStrapi('/enrollments?populate=*', { token });
+      const enrollments = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
+
       return (
         enrollments.find((e) => {
           const data = e.attributes || e;
-          const cId = data.course?.data?.id || data.course?.id || data.course?.documentId || data.course;
-          return String(cId) === String(courseId);
+          const u = data.user?.data || data.user;
+          const uId = u?.documentId || u?.id || u?.attributes?.documentId || u?.attributes?.id || data.user;
+
+          const c = data.course?.data || data.course;
+          const cId = c?.documentId || c?.id || c?.attributes?.documentId || c?.attributes?.id || data.course;
+
+          const isUserMatch = String(uId) === String(userId);
+          const isCourseMatch = String(cId) === String(courseId);
+
+          return isUserMatch && isCourseMatch;
         }) || null
       );
     } catch (err) {
@@ -22,27 +28,65 @@ export const enrollmentService = {
     }
   },
 
-  // Enroll user into a course (Strapi v5 & v4 Compatible)
-  async enrollCourse(courseId, userId, token) {
-    const payload = {
-      data: {
-        user: typeof userId === 'string' && userId.length > 10 ? { set: [userId] } : userId,
-        course: typeof courseId === 'string' && courseId.length > 10 ? { set: [courseId] } : courseId,
-      },
-    };
+  // Get all courses enrolled by a specific student with lessons
+  async getStudentEnrollments(userId, token) {
+    try {
+      // populate=* ব্যবহার করে সেইফ রিকোয়েস্ট (500 এরর আসবে না)
+      const res = await fetchFromStrapi('/enrollments?populate[course][populate]=*&populate[user]=*', { token }).catch(
+        async () => await fetchFromStrapi('/enrollments?populate=*', { token })
+      );
 
-    return await fetchFromStrapi('/enrollments', {
-      method: 'POST',
-      token,
-      body: JSON.stringify(payload),
-    });
+      const enrollments = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
+
+      return enrollments.filter((e) => {
+        const data = e.attributes || e;
+        const u = data.user?.data || data.user;
+        const uId = u?.documentId || u?.id || u?.attributes?.documentId || u?.attributes?.id || data.user;
+        return String(uId) === String(userId);
+      });
+    } catch (err) {
+      console.warn('Failed to load student enrollments:', err.message);
+      return [];
+    }
   },
 
-  // Get user completed lessons for a course
+  // Enroll user into a course
+  async enrollCourse(courseId, userId, token) {
+    const payloads = [
+      {
+        data: {
+          user: typeof userId === 'string' && userId.length > 10 ? { set: [userId] } : userId,
+          course: typeof courseId === 'string' && courseId.length > 10 ? { set: [courseId] } : courseId,
+        },
+      },
+      {
+        data: {
+          user: userId,
+          course: courseId,
+        },
+      },
+    ];
+
+    for (const payload of payloads) {
+      try {
+        const res = await fetchFromStrapi('/enrollments', {
+          method: 'POST',
+          token,
+          body: JSON.stringify(payload),
+        });
+        if (res?.data || res?.id) return res;
+      } catch {
+        // try next payload
+      }
+    }
+    return null;
+  },
+
+  // Get user completed lessons safely without deep-filter 500 crashes
   async getLessonProgress(courseId, userId, token) {
-    const localKey = `learnova_progress_${userId}_${courseId}`;
+    const localKey = courseId ? `learnova_progress_${userId}_${courseId}` : null;
     let localSaved = [];
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && localKey) {
       try {
         localSaved = JSON.parse(localStorage.getItem(localKey) || '[]');
       } catch {
@@ -51,20 +95,30 @@ export const enrollmentService = {
     }
 
     try {
-      const res = await fetchFromStrapi(
-        `/lesson-progresses?filters[$or][0][user][id][$eq]=${userId}&filters[$or][1][user][documentId][$eq]=${userId}&populate=*`,
-        { token }
-      );
-      const allProgresses = res.data || [];
+      const res = await fetchFromStrapi('/lesson-progresses?populate=*', { token });
+      const allProgresses = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
 
-      const backendProgresses = allProgresses.filter((p) => {
+      // Filter by user
+      const userProgresses = allProgresses.filter((p) => {
         const data = p.attributes || p;
-        const cId = data.course?.data?.id || data.course?.id || data.course?.documentId || data.course;
+        const u = data.user?.data || data.user;
+        const uId = u?.documentId || u?.id || u?.attributes?.documentId || u?.attributes?.id || data.user;
+        return String(uId) === String(userId);
+      });
+
+      if (!courseId) {
+        return userProgresses;
+      }
+
+      const courseProgresses = userProgresses.filter((p) => {
+        const data = p.attributes || p;
+        const c = data.course?.data || data.course;
+        const cId = c?.documentId || c?.id || c?.attributes?.documentId || c?.attributes?.id || data.course;
         return String(cId) === String(courseId);
       });
 
-      if (backendProgresses.length > 0) {
-        return backendProgresses;
+      if (courseProgresses.length > 0) {
+        return courseProgresses;
       }
     } catch (err) {
       console.warn('LessonProgress fetch fallback to local:', err.message);
@@ -79,12 +133,16 @@ export const enrollmentService = {
     const courseDocId = course.documentId || course.id;
     const userDocId = user.documentId || user.id;
 
-    const localKey = `learnova_progress_${user.id}_${course.id}`;
+    const localKey = `learnova_progress_${userDocId}_${courseDocId}`;
     if (typeof window !== 'undefined') {
-      const existing = JSON.parse(localStorage.getItem(localKey) || '[]');
-      if (!existing.includes(lesson.id)) {
-        existing.push(lesson.id);
-        localStorage.setItem(localKey, JSON.stringify(existing));
+      try {
+        const existing = JSON.parse(localStorage.getItem(localKey) || '[]');
+        if (!existing.includes(lessonDocId)) {
+          existing.push(lessonDocId);
+          localStorage.setItem(localKey, JSON.stringify(existing));
+        }
+      } catch {
+        // ignore
       }
     }
 

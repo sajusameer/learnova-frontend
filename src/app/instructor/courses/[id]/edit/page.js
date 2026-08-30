@@ -4,11 +4,12 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
-import { courseService } from '@/services/courseService';
 import { instructorService } from '@/services/instructorService';
+import { fetchFromStrapi } from '@/lib/api';
 
 export default function EditCoursePage() {
-  const { id } = useParams();
+  const params = useParams();
+  const id = params?.id || params?.slug;
   const router = useRouter();
   const { user, token, loading: authLoading } = useAuth();
 
@@ -33,7 +34,16 @@ export default function EditCoursePage() {
 
     const loadCourse = async () => {
       try {
-        const data = await courseService.getCourseBySlug(id);
+        let res = await fetchFromStrapi(`/courses/${id}?populate=*`, { token }).catch(() => null);
+
+        if (!res?.data) {
+          const slugRes = await fetchFromStrapi(`/courses?filters[slug][$eq]=${id}&populate=*`, { token }).catch(() => null);
+          if (slugRes?.data && slugRes.data.length > 0) {
+            res = { data: slugRes.data[0] };
+          }
+        }
+
+        const data = res?.data;
         if (data) {
           const cData = data.attributes || data;
           setFormData({
@@ -41,6 +51,8 @@ export default function EditCoursePage() {
             description: cData.description || '',
           });
           setExistingLessons(cData.lessons?.data || cData.lessons || []);
+        } else {
+          setMessage('Course not found in database.');
         }
       } catch (err) {
         console.error('Failed to load course for edit:', err);
@@ -49,8 +61,10 @@ export default function EditCoursePage() {
       }
     };
 
-    if (id && user) loadCourse();
-  }, [id, user, authLoading, router]);
+    if (id && user && token) {
+      loadCourse();
+    }
+  }, [id, user, token, authLoading, router]);
 
   const handleCourseUpdate = async (e) => {
     e.preventDefault();
@@ -97,8 +111,8 @@ export default function EditCoursePage() {
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 py-10 space-y-8">
       <div>
-        <Link href="/dashboard" className="text-xs text-[var(--color-brand-primary)] font-semibold hover:underline">
-          &larr; Back to Dashboard
+        <Link href="/instructor" className="text-xs text-[var(--color-brand-primary)] font-semibold hover:underline">
+          &larr; Back to Instructor Portal
         </Link>
         <h1 className="text-2xl font-black text-[var(--color-brand-text-main)] mt-2">Edit Course & Curriculum</h1>
         <p className="text-xs text-[var(--color-brand-text-muted)] mt-1">Update course metadata and manage curriculum lessons.</p>
@@ -142,7 +156,7 @@ export default function EditCoursePage() {
           <button
             type="submit"
             disabled={updating}
-            className="px-6 py-2.5 bg-[var(--color-brand-primary)] hover:bg-[var(--color-brand-primary-hover)] text-white font-semibold rounded-xl text-xs transition shadow-sm"
+            className="px-6 py-2.5 bg-[var(--color-brand-primary)] hover:bg-[var(--color-brand-primary-hover)] text-white font-semibold rounded-xl text-xs transition shadow-sm cursor-pointer"
           >
             {updating ? 'Saving...' : 'Save Course Info'}
           </button>
@@ -156,22 +170,26 @@ export default function EditCoursePage() {
         </h2>
 
         <div className="space-y-2">
-          {existingLessons.map((lesson, idx) => {
-            const lData = lesson.attributes || lesson;
-            return (
-              <div key={lesson.id || idx} className="p-3.5 bg-gray-50 border border-gray-200 rounded-xl flex items-center justify-between text-xs">
-                <div className="flex items-center gap-3">
-                  <span className="w-6 h-6 rounded-full bg-indigo-50 text-indigo-700 font-bold flex items-center justify-center">
-                    {idx + 1}
-                  </span>
-                  <div>
-                    <p className="font-bold text-gray-900">{lData.title}</p>
-                    <p className="text-[11px] text-gray-500 truncate max-w-md">{lData.videoUrl || lData.video_url}</p>
+          {existingLessons.length === 0 ? (
+            <p className="text-xs text-gray-500">No lessons created yet.</p>
+          ) : (
+            existingLessons.map((lesson, idx) => {
+              const lData = lesson.attributes || lesson;
+              return (
+                <div key={lesson.id || idx} className="p-3.5 bg-gray-50 border border-gray-200 rounded-xl flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-3">
+                    <span className="w-6 h-6 rounded-full bg-indigo-50 text-indigo-700 font-bold flex items-center justify-center">
+                      {idx + 1}
+                    </span>
+                    <div>
+                      <p className="font-bold text-gray-900">{lData.title}</p>
+                      <p className="text-[11px] text-gray-500 truncate max-w-md">{lData.videoUrl || lData.video_url}</p>
+                    </div>
                   </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })
+          )}
         </div>
       </div>
 
@@ -222,7 +240,7 @@ export default function EditCoursePage() {
           <button
             type="submit"
             disabled={addingLesson}
-            className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl text-xs transition shadow-sm"
+            className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl text-xs transition shadow-sm cursor-pointer"
           >
             {addingLesson ? 'Adding...' : 'Add Lesson to Course'}
           </button>
