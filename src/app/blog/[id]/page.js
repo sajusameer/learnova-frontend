@@ -5,9 +5,11 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { fetchFromStrapi } from '@/lib/api';
 
+const DEFAULT_COVER = 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=1200&q=80';
+
 export default function BlogPostDetailPage() {
   const params = useParams();
-  const routeId = params?.slug || params?.id || Object.values(params || {})[0];
+  const routeId = params?.id || params?.slug || Object.values(params || {})[0];
 
   const [post, setPost] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -30,26 +32,24 @@ export default function BlogPostDetailPage() {
         if (found) {
           const d = found.attributes || found;
 
-          // Strapi-র সব সম্ভাব্য ফিল্ড চেক
-          let text = d.body || d.content || d.description || '';
-          if (Array.isArray(text)) {
-            text = text.map((b) => b.children?.map((c) => c.text).join('')).join('\n\n');
+          // Blocks অ্যারে থেকে টেক্সট বের করা
+          let contentText = '';
+          if (Array.isArray(d.body)) {
+            contentText = d.body
+              .map((block) =>
+                block.children?.map((child) => child.text || '').join('') || ''
+              )
+              .join('\n\n');
+          } else if (typeof d.body === 'string') {
+            contentText = d.body;
           }
 
-          // Cover image বের করা
-          const imgMatch = typeof text === 'string' ? text.match(/^!\[cover\]\((.*?)\)/) : null;
-          const cover = imgMatch
-            ? imgMatch[1]
-            : d.coverUrl || d.cover || 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=1200&q=80';
-
-          const cleanBody = imgMatch ? text.replace(/^!\[cover\]\(.*?\)\s*/i, '').trim() : text;
-
           setPost({
-            title: (d.title || 'Untitled Post').replace(/^\[DRAFT\]\s*/i, ''),
-            body: cleanBody || text, // স্ট্রিং থাকলে সরাসরি বসাচ্ছে
-            coverUrl: cover,
-            date: d.createdAt ? new Date(d.createdAt).toLocaleDateString() : '8/30/2026',
-            author: d.author?.username || (typeof d.author === 'string' ? d.author : 'Learnova Team'),
+            title: d.title || 'Untitled Post',
+            body: contentText,
+            coverImageUrl: d.coverImageUrl || DEFAULT_COVER,
+            date: d.createdAt ? new Date(d.createdAt).toLocaleDateString() : '8/31/2026',
+            author: d.author?.username || 'Learnova Team',
           });
         }
       } catch (err) {
@@ -98,15 +98,13 @@ export default function BlogPostDetailPage() {
         </div>
       </div>
 
-      {post.coverUrl && (
-        <div className="w-full h-72 sm:h-96 rounded-2xl overflow-hidden border border-slate-200 bg-slate-100 shadow-sm">
-          <img src={post.coverUrl} alt={post.title} className="w-full h-full object-cover" />
-        </div>
-      )}
+      <div className="w-full h-72 sm:h-96 rounded-2xl overflow-hidden border border-slate-200 bg-slate-100 shadow-sm">
+        <img src={post.coverImageUrl} alt={post.title} className="w-full h-full object-cover" />
+      </div>
 
       {/* আর্টিকেল বডি টেক্সট */}
       <div className="text-slate-800 text-base leading-relaxed whitespace-pre-line py-4 border-t border-slate-100 font-normal">
-        {post.body}
+        {post.body || <p className="text-slate-400 italic">No content available for this publication.</p>}
       </div>
     </article>
   );

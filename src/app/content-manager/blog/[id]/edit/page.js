@@ -7,12 +7,14 @@ import { useAuth } from '@/context/AuthContext';
 import { fetchFromStrapi } from '@/lib/api';
 
 export default function EditBlogPostPage() {
-  const { id } = useParams();
+  const params = useParams();
+  const routeId = params?.id || params?.slug || Object.values(params || {})[0];
   const router = useRouter();
   const { user, token, loading: authLoading } = useAuth();
 
+  const [docId, setDocId] = useState('');
   const [title, setTitle] = useState('');
-  const [coverUrl, setCoverUrl] = useState('');
+  const [coverImageUrl, setCoverImageUrl] = useState('');
   const [body, setBody] = useState('');
   const [isDraft, setIsDraft] = useState(false);
 
@@ -28,40 +30,48 @@ export default function EditBlogPostPage() {
 
     const loadPost = async () => {
       try {
-        // Bulletproof Fetch: findOne (404) এড়াতে সব ফেচ করে ফিল্টার করা হচ্ছে
-        const res = await fetchFromStrapi(`/blog-posts?populate=*`, { token });
-        const allPosts = res?.data || res || [];
-        
-        // URL id এর সাথে ম্যাচ করা
-        const post = allPosts.find(p => String(p.documentId) === String(id) || String(p.id) === String(id));
+        const res = await fetchFromStrapi('/blog-posts?populate=*', { token });
+        const allPosts = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
+
+        const post = allPosts.find(
+          (p) =>
+            String(p.documentId) === String(routeId) ||
+            String(p.id) === String(routeId)
+        );
 
         if (post) {
-          const pData = post.attributes || post;
-          const rawTitle = pData.title || '';
-          const rawBody = pData.body || pData.content || '';
+          const d = post.attributes || post;
+          setDocId(post.documentId || post.id);
+          setTitle(d.title || '');
+          setCoverImageUrl(d.coverImageUrl || '');
+          setIsDraft(d.postStatus === 'draft' || (d.title && d.title.startsWith('[DRAFT]')));
 
-          const imgMatch = rawBody.match(/^!\[cover\]\((.*?)\)\n\n/);
-          const extractedCover = imgMatch ? imgMatch[1] : (pData.coverUrl || pData.cover || '');
-          const cleanBody = imgMatch ? rawBody.replace(/^!\[cover\]\(.*?\)\n\n/, '') : rawBody;
-
-          const checkDraft = rawTitle.startsWith('[DRAFT]');
-          setIsDraft(checkDraft);
-          setTitle(checkDraft ? rawTitle.replace(/^\[DRAFT\]\s*/i, '') : rawTitle);
-          setCoverUrl(extractedCover);
-          setBody(cleanBody);
+          // Blocks ফরম্যাট থেকে প্লেইন টেক্সটে কনভার্ট
+          if (Array.isArray(d.body)) {
+            const extracted = d.body
+              .map((block) =>
+                block.children?.map((c) => c.text || '').join('') || ''
+              )
+              .join('\n\n');
+            setBody(extracted);
+          } else if (typeof d.body === 'string') {
+            setBody(d.body);
+          } else {
+            setBody('');
+          }
         } else {
-          setError('Post not found. It may have been deleted.');
+          setError('Post not found.');
         }
       } catch (err) {
-        console.error('Failed to load post for editing:', err);
+        console.error('Failed to load post:', err);
         setError('Failed to load post details.');
       } finally {
         setLoading(false);
       }
     };
 
-    if (id && user) loadPost();
-  }, [id, user, token, authLoading, router]);
+    if (routeId && user) loadPost();
+  }, [routeId, user, token, authLoading, router]);
 
   const handleSubmit = async (e, forceDraft = null) => {
     if (e) e.preventDefault();
@@ -70,36 +80,44 @@ export default function EditBlogPostPage() {
     setError(null);
 
     const draftState = forceDraft !== null ? forceDraft : isDraft;
+    const targetStatus = draftState ? 'draft' : 'published';
 
-    let formattedBody = body;
-    if (coverUrl && coverUrl.trim()) {
-      formattedBody = `![cover](${coverUrl.trim()})\n\n${body}`;
-    }
+    // Strapi Blocks ফরম্যাট তৈরি
+    const paragraphs = body.trim().split('\n\n').filter(Boolean);
+    const blocksData = paragraphs.length > 0 
+      ? paragraphs.map((p) => ({
+          type: 'paragraph',
+          children: [{ type: 'text', text: p.trim() }],
+        }))
+      : [
+          {
+            type: 'paragraph',
+            children: [{ type: 'text', text: body.trim() }],
+          },
+        ];
 
-    let finalTitle = title.trim();
-    if (draftState && !finalTitle.startsWith('[DRAFT]')) {
-      finalTitle = `[DRAFT] ${finalTitle}`;
-    } else if (!draftState && finalTitle.startsWith('[DRAFT]')) {
-      finalTitle = finalTitle.replace(/^\[DRAFT\]\s*/i, '');
-    }
+    const payload = {
+      data: {
+        title: title.trim(),
+        body: blocksData, // Strapi Blocks ফরম্যাট পাঠানো হচ্ছে
+        coverImageUrl: coverImageUrl.trim() || null,
+        postStatus: targetStatus,
+      },
+    };
 
     try {
-      await fetchFromStrapi(`/blog-posts/${id}`, {
+      const targetEndpoint = `/blog-posts/${docId || routeId}`;
+      await fetchFromStrapi(targetEndpoint, {
         method: 'PUT',
         token,
-        body: {
-          data: {
-            title: finalTitle,
-            body: formattedBody,
-          },
-        },
+        body: payload,
       });
 
-      router.push('/content-manager');
+      router.push(`/blog/${docId || routeId}`);
       router.refresh();
     } catch (err) {
       console.error('Failed to update post:', err);
-      setError(err.message || 'Update failed! Please check Strapi permissions.');
+      setError(err.message || 'Update failed! Check Strapi permissions.');
     } finally {
       setSaving(false);
     }
@@ -120,7 +138,6 @@ export default function EditBlogPostPage() {
           &larr; Back to Content Manager
         </Link>
         <h1 className="text-2xl font-black text-slate-900 mt-2">Edit Article</h1>
-        <p className="text-xs text-slate-500 mt-1">Modify content and update publish status.</p>
       </div>
 
       {error && (
@@ -146,8 +163,8 @@ export default function EditBlogPostPage() {
             <label className="text-xs font-bold text-slate-700">Cover Image URL</label>
             <input
               type="url"
-              value={coverUrl}
-              onChange={(e) => setCoverUrl(e.target.value)}
+              value={coverImageUrl}
+              onChange={(e) => setCoverImageUrl(e.target.value)}
               className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 text-xs"
             />
           </div>
@@ -168,11 +185,12 @@ export default function EditBlogPostPage() {
         <div className="space-y-1.5">
           <label className="text-xs font-bold text-slate-700">Article Body</label>
           <textarea
-            rows={10}
+            rows={8}
             required
             value={body}
             onChange={(e) => setBody(e.target.value)}
-            className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 font-mono text-xs"
+            placeholder="Write full article content here..."
+            className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 text-xs leading-relaxed"
           />
         </div>
 
