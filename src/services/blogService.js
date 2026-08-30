@@ -1,116 +1,97 @@
 import { fetchFromStrapi } from '@/lib/api';
 
-// Helper to extract image URL from Markdown body or fallback
-export function extractCoverImage(body) {
-  if (!body) return 'https://images.unsplash.com/photo-1517694712202-14dd9538aa97?w=800&q=80';
-  const match = body.match(/!\[.*?\]\((.*?)\)/);
-  return match ? match[1] : 'https://images.unsplash.com/photo-1517694712202-14dd9538aa97?w=800&q=80';
-}
+export const extractCoverImage = (body = '') => {
+  if (typeof body !== 'string') return '';
+  const match = body.match(/^!\[cover\]\((.*?)\)/);
+  return match ? match[1] : '';
+};
 
-// Helper to clean body text (remove cover image markdown from preview text)
-export function getCleanBody(body) {
-  if (!body) return '';
-  return body.replace(/!\[.*?\]\(.*?\)\n*/g, '').trim();
-}
+export const getCleanBody = (body = '') => {
+  if (typeof body !== 'string') return '';
+  return body.replace(/^!\[cover\]\(.*?\)\s*/i, '').trim();
+};
 
 export const blogService = {
-  // Public: Get published blog posts
+  // সকল পোস্ট ফেচ করা
+  async getAllPosts(token) {
+    try {
+      const res = await fetchFromStrapi('/blog-posts?populate=*', { token });
+      return Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
+    } catch {
+      return [];
+    }
+  },
+
+  // পাবলিক ব্লগের জন্য শুধু ড্রাফট ছাড়া পোস্ট ফিল্টার করা
   async getPublishedPosts() {
     try {
-      const res = await fetchFromStrapi('/blog-posts?populate=*&sort=createdAt:desc');
-      const posts = res.data || [];
-
-      return posts.filter((post) => {
-        const pData = post.attributes || post;
-        const status = pData.postStatus || pData.status || 'published';
-        return status === 'published';
+      const all = await this.getAllPosts();
+      return all.filter((p) => {
+        const d = p.attributes || p;
+        const title = d.title || '';
+        return !title.trim().startsWith('[DRAFT]') && d.isDraft !== true && d.postStatus !== 'draft';
       });
     } catch {
       return [];
     }
   },
 
-  // Public: Get single post
-  async getPostById(id) {
+  // নির্দিষ্ট পোস্ট ফেচ করা
+  async getPostById(id, token) {
     try {
-      const res = await fetchFromStrapi(`/blog-posts/${id}?populate=*`);
-      return res.data || null;
+      const posts = await this.getAllPosts(token);
+      return (
+        posts.find(
+          (p) =>
+            String(p.documentId) === String(id) ||
+            String(p.id) === String(id) ||
+            String(p.attributes?.slug || p.slug) === String(id)
+        ) || null
+      );
     } catch {
       return null;
     }
   },
 
-  // Content Manager: Get all posts
-  async getAllPostsForManager(token) {
-    try {
-      const res = await fetchFromStrapi('/blog-posts?populate=*&sort=createdAt:desc', { token });
-      return res.data || [];
-    } catch {
-      return [];
+  // নতুন পোস্ট তৈরি
+  async createPost(formData, token) {
+    let finalBody = formData.body || '';
+    if (formData.cover && formData.cover.trim()) {
+      finalBody = `![cover](${formData.cover.trim()})\n\n${finalBody}`;
     }
-  },
-
-  // Content Manager: Create post with cover image embedded safely
-  async createPost(postData, userId, token) {
-    let finalBody = postData.body;
-    if (postData.cover && postData.cover.trim()) {
-      finalBody = `![cover](${postData.cover.trim()})\n\n${postData.body}`;
-    }
-
     const payload = {
-      data: {
-        title: postData.title,
-        body: finalBody,
-        postStatus: postData.postStatus || 'published',
-        author: userId,
-      },
+      title: formData.title,
+      body: finalBody,
     };
-
-    try {
-      return await fetchFromStrapi('/blog-posts', {
-        method: 'POST',
-        token,
-        body: JSON.stringify(payload),
-      });
-    } catch {
-      // Fallback if author relation is not supported
-      const safePayload = {
-        data: {
-          title: postData.title,
-          body: finalBody,
-          postStatus: postData.postStatus || 'published',
-        },
-      };
-      return await fetchFromStrapi('/blog-posts', {
-        method: 'POST',
-        token,
-        body: JSON.stringify(safePayload),
-      });
-    }
+    return fetchFromStrapi('/blog-posts', {
+      method: 'POST',
+      token,
+      body: { data: payload },
+    });
   },
 
-  // Delete post
+  // পোস্ট আপডেট
+  async updatePost(id, formData, token) {
+    let finalBody = formData.body || '';
+    if (formData.cover && formData.cover.trim()) {
+      finalBody = `![cover](${formData.cover.trim()})\n\n${finalBody}`;
+    }
+    const payload = {
+      title: formData.title,
+      body: finalBody,
+    };
+    return fetchFromStrapi(`/blog-posts/${id}`, {
+      method: 'PUT',
+      token,
+      body: { data: payload },
+    });
+  },
+
+  // পোস্ট ডিলিট
   async deletePost(id, token) {
-    return await fetchFromStrapi(`/blog-posts/${id}`, {
+    return fetchFromStrapi(`/blog-posts/${id}`, {
       method: 'DELETE',
       token,
     });
   },
-  // Content Manager: Update post
-async updatePost(id, postData, token) {
-  const payload = {
-    data: {
-      title: postData.title,
-      body: postData.body,
-      postStatus: postData.postStatus,
-    },
-  };
-
-  return await fetchFromStrapi(`/blog-posts/${id}`, {
-    method: 'PUT',
-    token,
-    body: JSON.stringify(payload),
-  });
-},
 };
-

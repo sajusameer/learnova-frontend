@@ -13,7 +13,6 @@ export default function CreatePostPage() {
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [coverUrl, setCoverUrl] = useState('https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=800&q=80');
-  const [isDraft, setIsDraft] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -33,18 +32,25 @@ export default function CreatePostPage() {
     setSubmitting(true);
     setErrorMsg('');
 
+    // কভার ইমেজ বডিতে যুক্ত করা
+    let formattedBody = body;
+    if (coverUrl && coverUrl.trim()) {
+      formattedBody = `![cover](${coverUrl.trim()})\n\n${body}`;
+    }
+
+    // ড্রাফট হলে টাইটেলে [DRAFT] ট্যাগ নিশ্চিত করা
+    let finalTitle = title.trim();
+    if (asDraft && !finalTitle.startsWith('[DRAFT]')) {
+      finalTitle = `[DRAFT] ${finalTitle}`;
+    } else if (!asDraft && finalTitle.startsWith('[DRAFT]')) {
+      finalTitle = finalTitle.replace(/^\[DRAFT\]\s*/i, '');
+    }
+
     try {
-      // Strapi-র সঠিক স্কিমা অনুযায়ী পেলোড (slug ফিল্ড রিমুভ করা হয়েছে)
+      // শুধুমাত্র Strapi-র বৈধ কোর ফিল্ড পাঠানো
       const postData = {
-        title,
-        body: body,
-        content: body,
-        cover: coverUrl,
-        coverUrl: coverUrl,
-        isDraft: asDraft,
-        postStatus: asDraft ? 'draft' : 'published',
-        author: user?.username || 'content_lead',
-        publishedAt: asDraft ? null : new Date().toISOString(),
+        title: finalTitle,
+        body: formattedBody,
       };
 
       await fetchFromStrapi('/blog-posts', {
@@ -57,25 +63,7 @@ export default function CreatePostPage() {
       router.refresh();
     } catch (err) {
       console.error('Failed to create post:', err);
-      // Fallback: শুধুমাত্র কোর ফিল্ড দিয়ে সেভ করার চেষ্টা
-      try {
-        const minimalData = {
-          title,
-          body: body,
-          publishedAt: asDraft ? null : new Date().toISOString(),
-        };
-
-        await fetchFromStrapi('/blog-posts', {
-          method: 'POST',
-          token,
-          body: { data: minimalData },
-        });
-
-        router.push('/content-manager');
-        router.refresh();
-      } catch (retryErr) {
-        setErrorMsg(retryErr.message || 'Failed to publish post.');
-      }
+      setErrorMsg(err.message || 'Failed to publish post.');
     } finally {
       setSubmitting(false);
     }
@@ -107,7 +95,7 @@ export default function CreatePostPage() {
         </div>
       )}
 
-      <form onSubmit={(e) => handleSubmit(e, isDraft)} className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-8 space-y-6 shadow-sm">
+      <form onSubmit={(e) => handleSubmit(e, false)} className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-8 space-y-6 shadow-sm">
         <div className="space-y-2">
           <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Article Title</label>
           <input
@@ -115,7 +103,7 @@ export default function CreatePostPage() {
             required
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="e.g. Building Scalable Fullstack Architecture"
+            placeholder="e.g. Building Scalable Architecture"
             className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-600 text-sm font-medium"
           />
         </div>
@@ -153,9 +141,8 @@ export default function CreatePostPage() {
             {submitting ? 'Saving...' : 'Save as Draft'}
           </button>
           <button
-            type="button"
+            type="submit"
             disabled={submitting}
-            onClick={(e) => handleSubmit(e, false)}
             className="w-full sm:w-auto px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl text-xs transition shadow-sm"
           >
             {submitting ? 'Publishing...' : 'Publish Article'}
